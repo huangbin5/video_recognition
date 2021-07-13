@@ -6,7 +6,6 @@ __pycache__/
 # C extensions
 *.so
 
-mypath.py
 .idea/
 run/
 # Distribution / packaging
@@ -107,5 +106,7 @@ venv.bak/
 .mypy_cache/
 
 # ignore data and model
-rawdata
-model
+model/
+dataraw/
+data/*
+test.py

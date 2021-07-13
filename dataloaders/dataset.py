@@ -10,21 +10,9 @@ from mypath import Path
 
 # classes extended Dataset must rewrite __len__ and __getitem__ methods
 class VideoDataset(Dataset):
-    r"""A Dataset for a folder of videos. Expects the directory structure to be
-    directory->[train/val/test]->[class labels]->[videos]. Initializes with a list
-    of all file names, along with an array of labels, with label being automatically
-    inferred from the respective folder names.
-
-        Args:
-            dataset (str): Name of dataset. Defaults to 'ucf101'.
-            app (str): Determines which folder of the directory the dataset will read from. Defaults to 'train'.
-            clip_len (int): Determines how many frames are there in each clip. Defaults to 16.
-            preprocess (bool): Determines whether to preprocess dataset. Default is False.
-    """
-
     def __init__(self, dataset='ucf101', app='train', clip_len=16, preprocess=False):
         self.root_dir, self.output_dir = Path.db_dir(dataset)
-        folder = os.path.join(self.output_dir, app)
+        app_dir = os.path.join(self.output_dir, app)
         self.clip_len = clip_len
         self.app = app
 
@@ -36,44 +24,41 @@ class VideoDataset(Dataset):
         if not os.path.exists(self.root_dir):
             raise RuntimeError('Dataset not found or corrupted. You need to download it from official website.')
 
-        if (not self.check_preprocess()) or preprocess:
+        if (not self.has_preprocess()) or preprocess:
             print(f'Preprocessing of {dataset} dataset, this will take long, but it will be done only once.')
             self.preprocess()
 
-        # Obtain all the filenames of files inside all the class folders
-        # Going through each class folder one at a time
-        self.fnames, labels = [], []
-        for label in sorted(os.listdir(folder)):
-            for fname in os.listdir(os.path.join(folder, label)):
-                self.fnames.append(os.path.join(folder, label, fname))
+        # Get all the videos and its label
+        self.videos, labels = [], []
+        for label in sorted(os.listdir(app_dir)):
+            for fname in os.listdir(os.path.join(app_dir, label)):
+                self.videos.append(os.path.join(app_dir, label, fname))
                 labels.append(label)
+        assert len(labels) == len(self.videos)
+        print(f'Number of {app} videos: {len(self.videos):d}')
 
-        assert len(labels) == len(self.fnames)
-        print('Number of {} videos: {:d}'.format(app, len(self.fnames)))
-
-        # Prepare a mapping between the label names (strings) and indices (ints)
+        # Match each label with an index
         self.label2index = {label: index for index, label in enumerate(sorted(set(labels)))}
-        # Convert the list of label names into an array of label indices
+        # Convert the list of label into its index
         self.label_array = np.array([self.label2index[label] for label in labels], dtype=int)
 
         if dataset == "ucf101":
             if not os.path.exists('dataloaders/ucf_labels.txt'):
                 with open('dataloaders/ucf_labels.txt', 'w') as f:
-                    for id, label in enumerate(sorted(self.label2index)):
-                        f.writelines(str(id + 1) + ' ' + label + '\n')
-
+                    for ii, label in enumerate(sorted(self.label2index)):
+                        f.writelines(str(ii + 1) + ' ' + label + '\n')
         elif dataset == 'hmdb51':
             if not os.path.exists('dataloaders/hmdb_labels.txt'):
                 with open('dataloaders/hmdb_labels.txt', 'w') as f:
-                    for id, label in enumerate(sorted(self.label2index)):
-                        f.writelines(str(id + 1) + ' ' + label + '\n')
+                    for ii, label in enumerate(sorted(self.label2index)):
+                        f.writelines(str(ii + 1) + ' ' + label + '\n')
 
     def __len__(self):
-        return len(self.fnames)
+        return len(self.videos)
 
     def __getitem__(self, index):
         # Loading and preprocessing.
-        buffer = self.load_frames(self.fnames[index])
+        buffer = self.load_frames(self.videos[index])
         buffer = self.crop(buffer, self.clip_len, self.crop_size)
         labels = np.array(self.label_array[index])
 
@@ -84,101 +69,81 @@ class VideoDataset(Dataset):
         buffer = self.to_tensor(buffer)
         return torch.from_numpy(buffer), torch.from_numpy(labels)
 
-    def check_preprocess(self):
+    def has_preprocess(self):
         # TODO: Check image size in output_dir
+        train_dir = os.path.join(self.output_dir, 'train')
         if not os.path.exists(self.output_dir):
             return False
-        elif not os.path.exists(os.path.join(self.output_dir, 'train')):
+        elif not os.path.exists(train_dir):
             return False
 
-        for ii, video_class in enumerate(os.listdir(os.path.join(self.output_dir, 'train'))):
+        empty = True
+        for ii, video_class in enumerate(os.listdir(train_dir)):
             for video in os.listdir(os.path.join(self.output_dir, 'train', video_class)):
-                video_name = os.path.join(
-                    os.path.join(self.output_dir, 'train', video_class, video),
-                    sorted(os.listdir(os.path.join(self.output_dir, 'train', video_class, video)))[0])
-                image = cv2.imread(video_name)
+                empty = False
+                video_dir = os.path.join(self.output_dir, 'train', video_class, video)
+                frame_name = os.path.join(video_dir, sorted(os.listdir(video_dir))[0])
+                image = cv2.imread(frame_name)
                 if np.shape(image)[0] != 128 or np.shape(image)[1] != 171:
                     return False
-                else:
-                    break
-
+                break
             if ii == 10:
                 break
-
-        return True
+        return not empty
 
     def preprocess(self):
         if not os.path.exists(self.output_dir):
-            os.mkdir(self.output_dir)
+            os.makedirs(self.output_dir)
             os.mkdir(os.path.join(self.output_dir, 'train'))
             os.mkdir(os.path.join(self.output_dir, 'val'))
             os.mkdir(os.path.join(self.output_dir, 'test'))
 
         # Split train/val/test sets
-        for file in os.listdir(self.root_dir):
-            file_path = os.path.join(self.root_dir, file)
-            video_files = [name for name in os.listdir(file_path)]
+        for action in os.listdir(self.root_dir):
+            action_path = os.path.join(self.root_dir, action)
+            video_files = [video for video in os.listdir(action_path)]
 
             train_and_valid, test = train_test_split(video_files, test_size=0.2, random_state=42)
             train, val = train_test_split(train_and_valid, test_size=0.2, random_state=42)
 
-            train_dir = os.path.join(self.output_dir, 'train', file)
-            val_dir = os.path.join(self.output_dir, 'val', file)
-            test_dir = os.path.join(self.output_dir, 'test', file)
-
-            if not os.path.exists(train_dir):
-                os.mkdir(train_dir)
-            if not os.path.exists(val_dir):
-                os.mkdir(val_dir)
-            if not os.path.exists(test_dir):
-                os.mkdir(test_dir)
-
-            for video in train:
-                self.process_video(video, file, train_dir)
-
-            for video in val:
-                self.process_video(video, file, val_dir)
-
-            for video in test:
-                self.process_video(video, file, test_dir)
-
+            train_dir, val_dir, test_dir = [
+                os.path.join(self.output_dir, app, action) for app in ['train', 'val', 'test']]
+            for app, app_dir in zip([train, val, test], [train_dir, val_dir, test_dir]):
+                if not os.path.exists(app_dir):
+                    os.mkdir(app_dir)
+                for video in app:
+                    self.process_video(video, action, app_dir)
         print('Preprocessing finished.')
 
     def process_video(self, video, action_name, save_dir):
         # Initialize a VideoCapture object to read video data into a numpy array
         video_filename = video.split('.')[0]
-        if not os.path.exists(os.path.join(save_dir, video_filename)):
-            os.mkdir(os.path.join(save_dir, video_filename))
+        video_dir = os.path.join(save_dir, video_filename)
+        if not os.path.exists(video_dir):
+            os.mkdir(video_dir)
 
         capture = cv2.VideoCapture(os.path.join(self.root_dir, action_name, video))
-
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
         frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         # Make sure splited video has at least 16 frames
         EXTRACT_FREQUENCY = 4
-        if frame_count // EXTRACT_FREQUENCY <= 16:
+        while EXTRACT_FREQUENCY > 1:
+            if frame_count // EXTRACT_FREQUENCY > 16:
+                break
             EXTRACT_FREQUENCY -= 1
-            if frame_count // EXTRACT_FREQUENCY <= 16:
-                EXTRACT_FREQUENCY -= 1
-                if frame_count // EXTRACT_FREQUENCY <= 16:
-                    EXTRACT_FREQUENCY -= 1
 
-        count = 0
-        i = 0
-        retaining = True
-
-        while count < frame_count and retaining:
-            retaining, frame = capture.read()
+        count, num = 0, 0
+        while count < frame_count:
+            _, frame = capture.read()
             if frame is None:
-                continue
-
+                break
             if count % EXTRACT_FREQUENCY == 0:
                 if (frame_height != self.resize_height) or (frame_width != self.resize_width):
                     frame = cv2.resize(frame, (self.resize_width, self.resize_height))
-                cv2.imwrite(filename=os.path.join(save_dir, video_filename, '0000{}.jpg'.format(str(i))), img=frame)
-                i += 1
+                cv2.imwrite(filename=os.path.join(save_dir, video_filename, '0000{}.jpg'.format(str(num))), img=frame)
+                num += 1
             count += 1
 
         # Release the VideoCapture once it is no longer needed
@@ -225,10 +190,10 @@ class VideoDataset(Dataset):
         # Crop and jitter the video using indexing. The spatial crop is performed on
         # the entire array, so each frame is cropped in the same location. The temporal
         # jitter takes place via the selection of consecutive frames
-        buffer = buffer[time_index:time_index + clip_len,
+        buffer = buffer[
+                 time_index:time_index + clip_len,
                  height_index:height_index + crop_size,
                  width_index:width_index + crop_size, :]
-
         return buffer
 
 
