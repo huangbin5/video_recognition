@@ -1,18 +1,19 @@
 import os
-from sklearn.model_selection import train_test_split
-
-import torch
 import cv2
 import numpy as np
+
+import torch
 from torch.utils.data import Dataset
-from mypath import Path
+from sklearn.model_selection import train_test_split
+
+from tools.mypath import Path
 
 
 # classes extended Dataset must rewrite __len__ and __getitem__ methods
 class VideoDataset(Dataset):
     def __init__(self, dataset='ucf101', app='train', clip_len=16, preprocess=False):
-        self.root_dir, self.output_dir = Path.db_dir(dataset)
-        app_dir = os.path.join(self.output_dir, app)
+        self.raw_dir, self.root_dir = Path.data_dir(dataset)
+        app_dir = os.path.join(self.root_dir, app)
         self.clip_len = clip_len
         self.app = app
 
@@ -21,12 +22,12 @@ class VideoDataset(Dataset):
         self.resize_width = 171
         self.crop_size = 112
 
-        if not os.path.exists(self.root_dir):
+        if not os.path.exists(self.raw_dir):
             raise RuntimeError('Dataset not found or corrupted. You need to download it from official website.')
 
-        if (not self.has_preprocess()) or preprocess:
+        if (not self.__has_preprocess()) or preprocess:
             print(f'Preprocessing of {dataset} dataset, this will take long, but it will be done only once.')
-            self.preprocess()
+            self.__preprocess()
 
         # Get all the videos and its label
         self.videos, labels = [], []
@@ -43,13 +44,13 @@ class VideoDataset(Dataset):
         self.label_array = np.array([self.label2index[label] for label in labels], dtype=int)
 
         if dataset == "ucf101":
-            if not os.path.exists('dataloaders/ucf_labels.txt'):
-                with open('dataloaders/ucf_labels.txt', 'w') as f:
+            if not os.path.exists('../labels/ucf_labels.txt'):
+                with open('../labels/ucf_labels.txt', 'w') as f:
                     for ii, label in enumerate(sorted(self.label2index)):
                         f.writelines(str(ii + 1) + ' ' + label + '\n')
         elif dataset == 'hmdb51':
-            if not os.path.exists('dataloaders/hmdb_labels.txt'):
-                with open('dataloaders/hmdb_labels.txt', 'w') as f:
+            if not os.path.exists('../labels/hmdb_labels.txt'):
+                with open('../labels/hmdb_labels.txt', 'w') as f:
                     for ii, label in enumerate(sorted(self.label2index)):
                         f.writelines(str(ii + 1) + ' ' + label + '\n')
 
@@ -69,19 +70,19 @@ class VideoDataset(Dataset):
         buffer = self.to_tensor(buffer)
         return torch.from_numpy(buffer), torch.from_numpy(labels)
 
-    def has_preprocess(self):
+    def __has_preprocess(self):
         # TODO: Check image size in output_dir
-        train_dir = os.path.join(self.output_dir, 'train')
-        if not os.path.exists(self.output_dir):
+        train_dir = os.path.join(self.root_dir, 'train')
+        if not os.path.exists(self.root_dir):
             return False
         elif not os.path.exists(train_dir):
             return False
 
         empty = True
         for ii, video_class in enumerate(os.listdir(train_dir)):
-            for video in os.listdir(os.path.join(self.output_dir, 'train', video_class)):
+            for video in os.listdir(os.path.join(self.root_dir, 'train', video_class)):
                 empty = False
-                video_dir = os.path.join(self.output_dir, 'train', video_class, video)
+                video_dir = os.path.join(self.root_dir, 'train', video_class, video)
                 frame_name = os.path.join(video_dir, sorted(os.listdir(video_dir))[0])
                 image = cv2.imread(frame_name)
                 if np.shape(image)[0] != 128 or np.shape(image)[1] != 171:
@@ -91,38 +92,38 @@ class VideoDataset(Dataset):
                 break
         return not empty
 
-    def preprocess(self):
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
-            os.mkdir(os.path.join(self.output_dir, 'train'))
-            os.mkdir(os.path.join(self.output_dir, 'val'))
-            os.mkdir(os.path.join(self.output_dir, 'test'))
+    def __preprocess(self):
+        if not os.path.exists(self.root_dir):
+            os.makedirs(self.root_dir)
+            os.mkdir(os.path.join(self.root_dir, 'train'))
+            os.mkdir(os.path.join(self.root_dir, 'val'))
+            os.mkdir(os.path.join(self.root_dir, 'test'))
 
         # Split train/val/test sets
-        for action in os.listdir(self.root_dir):
-            action_path = os.path.join(self.root_dir, action)
+        for action in os.listdir(self.raw_dir):
+            action_path = os.path.join(self.raw_dir, action)
             video_files = [video for video in os.listdir(action_path)]
 
             train_and_valid, test = train_test_split(video_files, test_size=0.2, random_state=42)
             train, val = train_test_split(train_and_valid, test_size=0.2, random_state=42)
 
             train_dir, val_dir, test_dir = [
-                os.path.join(self.output_dir, app, action) for app in ['train', 'val', 'test']]
+                os.path.join(self.root_dir, app, action) for app in ['train', 'val', 'test']]
             for app, app_dir in zip([train, val, test], [train_dir, val_dir, test_dir]):
                 if not os.path.exists(app_dir):
                     os.mkdir(app_dir)
                 for video in app:
-                    self.process_video(video, action, app_dir)
+                    self.__process_video(video, action, app_dir)
         print('Preprocessing finished.')
 
-    def process_video(self, video, action_name, save_dir):
+    def __process_video(self, video, action_name, save_dir):
         # Initialize a VideoCapture object to read video data into a numpy array
         video_filename = video.split('.')[0]
         video_dir = os.path.join(save_dir, video_filename)
         if not os.path.exists(video_dir):
             os.mkdir(video_dir)
 
-        capture = cv2.VideoCapture(os.path.join(self.root_dir, action_name, video))
+        capture = cv2.VideoCapture(os.path.join(self.raw_dir, action_name, video))
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
         frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))

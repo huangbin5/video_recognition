@@ -23,7 +23,7 @@ def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("Device being used:", device)
 
-    with open('./dataloaders/ucf_labels.txt', 'r') as f:
+    with open('labels/ucf_labels.txt', 'r') as f:
         class_names = f.readlines()
         f.close()
     # init model

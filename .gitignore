@@ -7,7 +7,6 @@ __pycache__/
 *.so
 
 .idea/
-run/
 # Distribution / packaging
 .Python
 build/
@@ -107,6 +106,8 @@ venv.bak/
 
 # ignore data and model
 model/
+labels/
 dataraw/
 data/*
-test.py
+log/
+tmp.py

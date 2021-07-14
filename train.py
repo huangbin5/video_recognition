@@ -1,57 +1,50 @@
 import timeit
 from datetime import datetime
-import socket
 import os
 import glob
+import shutil
 from tqdm import tqdm
 
 import torch
-from tensorboardX import SummaryWriter
 from torch import nn, optim
 from torch.utils.data import DataLoader
-from torch.autograd import Variable
+from tensorboardX import SummaryWriter
 
-from dataloaders.dataset import VideoDataset
+from tools.dataset import VideoDataset
 from network import C3D_model, R2Plus1D_model, R3D_model
 
-# Use GPU if available else revert to CPU
+# 已实现的数据集和模型
+ALL_DATASETS = {'ucf101': 101, 'hmdb51': 51}
+ALL_MODEL = ['C3D', 'R2Plus1D', 'R3D']
+
+# 尝试使用GPU
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("Device being used: ", device)
 
-num_epochs = 100  # Number of epochs for training
-resume_epoch = 15  # From which epoch to continue training
-use_test = True  # See evolution of the test set when training
-test_interval = 10  # Run on test set every test_interval epochs
-snapshot = 1  # Store a model every snapshot epochs
-lr = 1e-3  # Learning rate
+dataset, model_name = 'ucf101', 'C3D'
+if dataset not in ALL_DATASETS:
+    raise NotImplementedError('Only ucf101 and hmdb51 datasets are supported.')
+num_classes = ALL_DATASETS[dataset]
 
-dataset = 'ucf101'  # Options: ucf101 or hmdb51
-if dataset == 'hmdb51':
-    num_classes = 51
-elif dataset == 'ucf101':
-    num_classes = 101
-else:
-    print('We only implemented ucf101 and hmdb51 datasets.')
-    raise NotImplementedError
+# start_epoch: 从已保存的哪个epoch接着训练
+num_epochs, start_epoch, lr = 100, 0, 1e-3
+# use_test: 训练过程中是否在测试集计算指标
+use_test, test_interval, ckpt_interval = True, 5, 5
 
 save_dir_root = os.path.dirname(os.path.abspath(__file__))
+runs = glob.glob(os.path.join(save_dir_root, 'log', 'run_*'))
+runs = sorted([int(run.split('_')[-1]) for run in runs])
+run_id = runs[-1] if runs else 0
+if start_epoch == 0:
+    run_id += 1
 
-if resume_epoch != 0:
-    runs = sorted(glob.glob(os.path.join(save_dir_root, 'run', 'run_*')))
-    run_id = int(runs[-1].split('_')[-1]) if runs else 0
-else:
-    # todo Not understand
-    runs = sorted(glob.glob(os.path.join(save_dir_root, 'run', 'run_*')))
-    run_id = int(runs[-1].split('_')[-1]) + 1 if runs else 0
-
-save_dir = os.path.join(save_dir_root, 'run', 'run_' + str(run_id))
-model_name = 'C3D'  # Options: C3D or R2Plus1D or R3D
+save_dir = os.path.join(save_dir_root, 'log', 'run_' + str(run_id))
 save_name = model_name + '-' + dataset
 
 
 # 8G GPU support batch_size of at most 15
 def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, batch_size=15, lr=lr,
-                num_epochs=num_epochs, save_epoch=snapshot, use_test=use_test, test_interval=test_interval):
+                num_epochs=num_epochs, save_epoch=ckpt_interval, use_test=use_test, test_interval=test_interval):
     if model_name == 'C3D':
         model = C3D_model.C3D(num_classes=num_classes, pretrained=True)
         train_params = [{'params': C3D_model.get_1x_lr_params(model), 'lr': lr},
@@ -72,19 +65,23 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, bat
     model.to(device)
     criterion.to(device)
 
-    if resume_epoch == 0:
+    if start_epoch == 0:
         print(f"Training {model_name} from scratch...")
     else:
-        # Load checkpoint from "./run/run_0/models/C3D-ucf101_epoch-1.pth.tar"
-        path = os.path.join(save_dir, 'models', save_name + '_epoch-' + str(resume_epoch - 1) + '.pth.tar')
-        checkpoint = torch.load(path, map_location=lambda storage, loc: storage)
-        print(f"Initializing weights from: {path}...")
+        # Load checkpoint from "./log/run_0/C3D-ucf101_epoch-1.pth"
+        ckpt_path = os.path.join(save_dir, save_name + '_epoch-' + str(start_epoch) + '.pth')
+        checkpoint = torch.load(ckpt_path, map_location=lambda storage, loc: storage)
+        print(f"Initializing weights from: {ckpt_path}...")
         model.load_state_dict(checkpoint['state_dict'])
         optimizer.load_state_dict(checkpoint['opt_dict'])
 
     print(f'Total params: {sum(p.numel() for p in model.parameters()) / 1000000.0:.2f}M')
 
-    log_dir = os.path.join(save_dir, 'models', datetime.now().strftime('%b%d_%H-%M-%S') + '_' + socket.gethostname())
+    log_his = sorted(os.path.join(save_dir, t) for t in os.listdir(save_dir)
+                     if os.path.isdir(os.path.join(save_dir, t)))
+    last_log_dir = log_his[-1] if log_his else None
+    log_dir = os.path.join(save_dir, datetime.now().strftime('%y%m%d_%H%M%S'))
+    shutil.copytree(last_log_dir, log_dir)
     writer = SummaryWriter(log_dir=log_dir)
 
     print(f'Training model on {dataset} dataset...')
@@ -99,7 +96,7 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, bat
     train_val_sizes = {x: len(train_val_loaders[x].dataset) for x in ['train', 'val']}
     test_size = len(test_dataloader.dataset)
 
-    for epoch in range(resume_epoch, num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         # each epoch has a training and validation step
         for phase in ['train', 'val']:
             start_time = timeit.default_timer()
@@ -143,18 +140,18 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, bat
             if phase == 'train':
                 # scheduler.step() is to be called once every epoch during training
                 scheduler.step()
-                writer.add_scalar('data/train_loss_epoch', epoch_loss, epoch)
-                writer.add_scalar('data/train_acc_epoch', epoch_acc, epoch)
+                writer.add_scalar('data/train_loss', epoch_loss, epoch)
+                writer.add_scalar('data/train_acc', epoch_acc, epoch)
             else:
-                writer.add_scalar('data/val_loss_epoch', epoch_loss, epoch)
-                writer.add_scalar('data/val_acc_epoch', epoch_acc, epoch)
+                writer.add_scalar('data/val_loss', epoch_loss, epoch)
+                writer.add_scalar('data/val_acc', epoch_acc, epoch)
 
             print(f"[{phase}] Epoch: {epoch + 1}/{num_epochs} Loss: {epoch_loss} Acc: {epoch_acc}")
             stop_time = timeit.default_timer()
             print(f"Execution time: {stop_time - start_time}\n")
 
         if (epoch + 1) % save_epoch == 0:
-            save_path = os.path.join(save_dir, 'models', save_name + '_epoch-' + str(epoch) + '.pth.tar')
+            save_path = os.path.join(save_dir, save_name + '_epoch-' + str(epoch + 1) + '.pth')
             torch.save({
                 'epoch': epoch + 1,
                 'state_dict': model.state_dict(),
@@ -185,8 +182,8 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, bat
             epoch_loss = running_loss / test_size
             epoch_acc = running_corrects.double() / test_size
 
-            writer.add_scalar('data/test_loss_epoch', epoch_loss, epoch)
-            writer.add_scalar('data/test_acc_epoch', epoch_acc, epoch)
+            writer.add_scalar('data/test_loss', epoch_loss, epoch)
+            writer.add_scalar('data/test_acc', epoch_acc, epoch)
 
             print(f"[test] Epoch: {epoch + 1}/{num_epochs} Loss: {epoch_loss} Acc: {epoch_acc}")
             stop_time = timeit.default_timer()
