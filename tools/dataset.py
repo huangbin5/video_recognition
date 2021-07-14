@@ -44,13 +44,15 @@ class VideoDataset(Dataset):
         self.label_array = np.array([self.label2index[label] for label in labels], dtype=int)
 
         if dataset == "ucf101":
-            if not os.path.exists('../labels/ucf_labels.txt'):
-                with open('../labels/ucf_labels.txt', 'w') as f:
+            label_path = self.__get_path('../labels/ucf_labels.txt')
+            if not os.path.exists(label_path):
+                with open(label_path, 'w') as f:
                     for ii, label in enumerate(sorted(self.label2index)):
                         f.writelines(str(ii + 1) + ' ' + label + '\n')
         elif dataset == 'hmdb51':
-            if not os.path.exists('../labels/hmdb_labels.txt'):
-                with open('../labels/hmdb_labels.txt', 'w') as f:
+            label_path = self.__get_path('../labels/hmdb_labels.txt')
+            if not os.path.exists(label_path):
+                with open(label_path, 'w') as f:
                     for ii, label in enumerate(sorted(self.label2index)):
                         f.writelines(str(ii + 1) + ' ' + label + '\n')
 
@@ -69,6 +71,11 @@ class VideoDataset(Dataset):
         buffer = self.normalize(buffer)
         buffer = self.to_tensor(buffer)
         return torch.from_numpy(buffer), torch.from_numpy(labels)
+
+    def __get_path(self, file):
+        if file.startswith('./'):
+            file = file[2:]
+        return os.path.join(os.path.dirname(__file__), file)
 
     def __has_preprocess(self):
         # TODO: Check image size in output_dir
