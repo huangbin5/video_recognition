@@ -13,6 +13,17 @@ from tensorboardX import SummaryWriter
 from tools.dataset import VideoDataset
 from network import C3D_model, R2Plus1D_model, R3D_model
 
+
+class Hyper:
+    batch_size = 15  # 8G GPU支持 batch_size 最大为 15
+    lr = 1e-3
+    num_epochs = 100
+    start_epoch = 0  # 从已保存的哪个epoch接着训练
+    use_test = True  # 训练过程中是否在测试集计算指标
+    test_interval = 5  # 使用测试集计算的间隔
+    ckpt_interval = 5  # 模型参数保存的间隔
+
+
 # 已实现的数据集和模型
 ALL_DATASETS = {'ucf101': 101, 'hmdb51': 51}
 ALL_MODEL = ['C3D', 'R2Plus1D', 'R3D']
@@ -28,49 +39,45 @@ NUM_CLASSES = ALL_DATASETS[DATASET]
 if MODEL_NAME not in ALL_MODEL:
     raise NotImplementedError('Only C3D, R2Plus1D and R3D models are supported.')
 
-# start_epoch: 从已保存的哪个epoch接着训练
-num_epochs, start_epoch, lr = 100, 0, 1e-3
-# use_test: 训练过程中是否在测试集计算指标
-use_test, test_interval, ckpt_interval = True, 5, 5
-
 # 获取本次run保存的路径
 SAVE_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log')
 runs = glob.glob(os.path.join(SAVE_ROOT, 'run_*'))
 runs = sorted([int(run.split('_')[-1]) for run in runs])
 run_id = runs[-1] if runs else 0
-if start_epoch == 0:
+if Hyper.start_epoch == 0:
     run_id += 1
 SAVE_DIR = os.path.join(SAVE_ROOT, 'run_' + str(run_id))
 
 
-def init_model(model_name=MODEL_NAME, num_classes=NUM_CLASSES, lr=lr):
-    if model_name == 'C3D':
-        model = C3D_model.C3D(num_classes=num_classes, pretrained=True)
+def _init_model(lr=Hyper.lr):
+    if MODEL_NAME == 'C3D':
+        model = C3D_model.C3D(num_classes=NUM_CLASSES, pretrained=True)
         train_params = [{'params': C3D_model.get_1x_lr_params(model), 'lr': lr},
                         {'params': C3D_model.get_10x_lr_params(model), 'lr': lr * 10}]
-    elif model_name == 'R2Plus1D':
-        model = R2Plus1D_model.R2Plus1DClassifier(num_classes=num_classes, layer_sizes=(2, 2, 2, 2))
+    elif MODEL_NAME == 'R2Plus1D':
+        model = R2Plus1D_model.R2Plus1DClassifier(num_classes=NUM_CLASSES, layer_sizes=(2, 2, 2, 2))
         train_params = [{'params': R2Plus1D_model.get_1x_lr_params(model), 'lr': lr},
                         {'params': R2Plus1D_model.get_10x_lr_params(model), 'lr': lr * 10}]
-    elif model_name == 'R3D':
-        model = R3D_model.R3DClassifier(num_classes=num_classes, layer_sizes=(2, 2, 2, 2))
+    elif MODEL_NAME == 'R3D':
+        model = R3D_model.R3DClassifier(num_classes=NUM_CLASSES, layer_sizes=(2, 2, 2, 2))
         train_params = model.parameters()
     return model, train_params
 
 
-def load_model_log(save_dir, ckpt_path, log_dir, model, optimizer):
+def _load_param_log(ckpt_path, log_dir, model, optimizer):
+    # 加载参数
     print(f"Initializing weights from: {ckpt_path}...")
     checkpoint = torch.load(ckpt_path, map_location=lambda storage, loc: storage)
     model.load_state_dict(checkpoint['state_dict'])
     optimizer.load_state_dict(checkpoint['opt_dict'])
-
-    log_his = sorted(os.path.join(save_dir, t) for t in os.listdir(save_dir)
-                     if os.path.isdir(os.path.join(save_dir, t)))
+    # 合并日志
+    log_his = sorted(os.path.join(SAVE_DIR, t) for t in os.listdir(SAVE_DIR)
+                     if os.path.isdir(os.path.join(SAVE_DIR, t)))
     last_log_dir = log_his[-1] if log_his else None
     shutil.copytree(last_log_dir, log_dir)
 
 
-def run_epoch(phase, epoch, data_loader, writer, model, criterion, optimizer=None, scheduler=None):
+def _run_epoch(phase, epoch, data_loader, writer, model, criterion, optimizer=None, scheduler=None):
     # 设置训练或测试模式
     model.train() if phase == 'train' else model.eval()
     start_time = timeit.default_timer()
@@ -97,62 +104,60 @@ def run_epoch(phase, epoch, data_loader, writer, model, criterion, optimizer=Non
     epoch_loss = total_loss / len(data_loader.dataset)
     epoch_acc = total_acc.double() / len(data_loader.dataset)
 
-    # 记录每个epoch的指标
     if phase == 'train':
         # 衰减学习率
         scheduler.step()
+    # 记录每个epoch的指标
     writer.add_scalar(f'data/{phase}_loss', epoch_loss, epoch)
     writer.add_scalar(f'data/{phase}_acc', epoch_acc, epoch)
 
-    print(f"[{phase}] Epoch: {epoch + 1}/{num_epochs} Loss: {epoch_loss} Acc: {epoch_acc}")
+    print(f"[{phase}] Epoch: {epoch}/{Hyper.num_epochs}  Loss: {epoch_loss}  Acc: {epoch_acc}")
     stop_time = timeit.default_timer()
     print(f"Execution time: {stop_time - start_time}\n")
 
 
-# 8G GPU支持 batch_size 最大为 15
-def train(dataset=DATASET, model_name=MODEL_NAME, num_classes=NUM_CLASSES, save_dir=SAVE_DIR,
-          batch_size=15, num_epochs=num_epochs, start_epoch=start_epoch, lr=lr,
-          use_test=use_test, test_interval=test_interval, ckpt_interval=ckpt_interval):
+def train(start_epoch=Hyper.start_epoch, batch_size=Hyper.batch_size):
     # 模型、策略、算法
-    model, train_params = init_model()
+    model, train_params = _init_model()
     model.to(DEVICE)
     criterion = nn.CrossEntropyLoss()
     criterion.to(DEVICE)
-    optimizer = optim.SGD(train_params, lr=lr, momentum=0.9, weight_decay=5e-4)
+    optimizer = optim.SGD(train_params, lr=Hyper.lr, momentum=0.9, weight_decay=5e-4)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
     # 恢复模型和log
-    model_data_name = model_name + '@' + dataset
-    log_dir = os.path.join(save_dir, datetime.now().strftime('%y%m%d_%H%M%S'))
+    model_data_name = MODEL_NAME + '@' + DATASET
+    log_dir = os.path.join(SAVE_DIR, datetime.now().strftime('%y%m%d_%H%M%S'))
     if start_epoch == 0:
         print(f"Training {model_data_name} from scratch...")
     else:
-        ckpt_path = os.path.join(save_dir, model_data_name + '_epoch-' + str(start_epoch) + '.pth')
-        load_model_log(save_dir, ckpt_path, log_dir, model, optimizer)
+        ckpt_path = os.path.join(SAVE_DIR, model_data_name + '_epoch-' + str(start_epoch) + '.pth')
+        _load_param_log(ckpt_path, log_dir, model, optimizer)
     print(f'Total params: {sum(t.numel() for t in model.parameters()) / 1000000.0:.2f}M')
 
     # 加载数据
-    train_dataloader = DataLoader(VideoDataset(dataset=dataset, app='train', clip_len=16),
+    train_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='train', clip_len=16),
                                   batch_size=batch_size, shuffle=True, num_workers=4)
-    val_dataloader = DataLoader(VideoDataset(dataset=dataset, app='val', clip_len=16),
+    val_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='val', clip_len=16),
                                 batch_size=batch_size, num_workers=4)
-    test_dataloader = DataLoader(VideoDataset(dataset=dataset, app='test', clip_len=16),
+    test_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='test', clip_len=16),
                                  batch_size=batch_size, num_workers=4)
     train_val_loaders = {'train': train_dataloader, 'val': val_dataloader}
 
     with SummaryWriter(log_dir=log_dir) as writer:
-        for epoch in range(start_epoch, num_epochs):
+        for epoch in range(start_epoch, Hyper.num_epochs):
+            epoch += 1
             # 训练并验证epoch
             for phase in ['train', 'val']:
-                run_epoch(phase, epoch, train_val_loaders[phase], writer, model, criterion, optimizer, scheduler)
+                _run_epoch(phase, epoch, train_val_loaders[phase], writer, model, criterion, optimizer, scheduler)
             # 测试模型
-            if use_test and (epoch + 1) % test_interval == 0:
-                run_epoch('test', epoch, test_dataloader, writer, model, criterion)
+            if Hyper.use_test and epoch % Hyper.test_interval == 0:
+                _run_epoch('test', epoch, test_dataloader, writer, model, criterion)
             # 保存模型
-            if (epoch + 1) % ckpt_interval == 0:
-                save_path = os.path.join(save_dir, model_data_name + '_epoch-' + str(epoch + 1) + '.pth')
+            if epoch % Hyper.ckpt_interval == 0:
+                save_path = os.path.join(SAVE_DIR, model_data_name + '_epoch-' + str(epoch) + '.pth')
                 torch.save({
-                    'epoch': epoch + 1,
+                    'epoch': epoch,
                     'state_dict': model.state_dict(),
                     'opt_dict': optimizer.state_dict()
                 }, save_path)
