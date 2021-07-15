@@ -70,54 +70,49 @@ def load_model_log(save_dir, ckpt_path, log_dir, model, optimizer):
     shutil.copytree(last_log_dir, log_dir)
 
 
-def train_epoch(epoch, train_val_loaders, model, criterion, optimizer, scheduler, writer):
-    for phase in ['train', 'val']:
-        train_val_sizes = len(train_val_loaders[phase].dataset)
-        # 设置训练或测试模式
-        model.train() if phase == 'train' else model.eval()
-        start_time = timeit.default_timer()
-        total_loss, total_acc = 0.0, 0.0
+def run_epoch(phase, epoch, data_loader, writer, model, criterion, optimizer=None, scheduler=None):
+    # 设置训练或测试模式
+    model.train() if phase == 'train' else model.eval()
+    start_time = timeit.default_timer()
+    total_loss, total_acc = 0.0, 0.0
 
-        # 按batch迭代
-        for inputs, labels in tqdm(train_val_loaders[phase]):
-            inputs = inputs.requires_grad_(True).to(DEVICE)
-            labels = labels.to(DEVICE)
-            optimizer.zero_grad()
-            if phase == 'train':
-                outputs = model(inputs)
-            else:
-                with torch.no_grad():
-                    outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            if phase == 'train':
-                loss.backward()
-                optimizer.step()
-            # 计算指标
-            preds = torch.max(nn.Softmax(dim=1)(outputs), dim=1)[1]
-            total_loss += loss.item() * inputs.size(0)
-            total_acc += torch.sum(preds == labels.data)
-        epoch_loss = total_loss / train_val_sizes
-        epoch_acc = total_acc.double() / train_val_sizes
-
-        # 记录每个epoch的指标
+    # 按batch迭代
+    for inputs, labels in tqdm(data_loader):
+        inputs = inputs.requires_grad_('train' == phase).to(DEVICE)
+        labels = labels.to(DEVICE)
         if phase == 'train':
-            # 衰减学习率
-            scheduler.step()
-            writer.add_scalar('data/train_loss', epoch_loss, epoch)
-            writer.add_scalar('data/train_acc', epoch_acc, epoch)
+            optimizer.zero_grad()
+            outputs = model(inputs)
         else:
-            writer.add_scalar('data/val_loss', epoch_loss, epoch)
-            writer.add_scalar('data/val_acc', epoch_acc, epoch)
+            with torch.no_grad():
+                outputs = model(inputs)
+        loss = criterion(outputs, labels)
+        if phase == 'train':
+            loss.backward()
+            optimizer.step()
+        # 计算指标
+        total_loss += loss.item() * inputs.size(0)
+        preds = torch.max(nn.Softmax(dim=1)(outputs), dim=1)[1]
+        total_acc += torch.sum(preds == labels.data)
+    epoch_loss = total_loss / len(data_loader.dataset)
+    epoch_acc = total_acc.double() / len(data_loader.dataset)
 
-        print(f"[{phase}] Epoch: {epoch + 1}/{num_epochs} Loss: {epoch_loss} Acc: {epoch_acc}")
-        stop_time = timeit.default_timer()
-        print(f"Execution time: {stop_time - start_time}\n")
+    # 记录每个epoch的指标
+    if phase == 'train':
+        # 衰减学习率
+        scheduler.step()
+    writer.add_scalar(f'data/{phase}_loss', epoch_loss, epoch)
+    writer.add_scalar(f'data/{phase}_acc', epoch_acc, epoch)
+
+    print(f"[{phase}] Epoch: {epoch + 1}/{num_epochs} Loss: {epoch_loss} Acc: {epoch_acc}")
+    stop_time = timeit.default_timer()
+    print(f"Execution time: {stop_time - start_time}\n")
 
 
 # 8G GPU支持 batch_size 最大为 15
-def train_model(dataset=DATASET, model_name=MODEL_NAME, num_classes=NUM_CLASSES, save_dir=SAVE_DIR,
-                batch_size=15, num_epochs=num_epochs, start_epoch=start_epoch, lr=lr,
-                use_test=use_test, test_interval=test_interval, ckpt_interval=ckpt_interval):
+def train(dataset=DATASET, model_name=MODEL_NAME, num_classes=NUM_CLASSES, save_dir=SAVE_DIR,
+          batch_size=15, num_epochs=num_epochs, start_epoch=start_epoch, lr=lr,
+          use_test=use_test, test_interval=test_interval, ckpt_interval=ckpt_interval):
     # 模型、策略、算法
     model, train_params = init_model()
     model.to(DEVICE)
@@ -144,52 +139,25 @@ def train_model(dataset=DATASET, model_name=MODEL_NAME, num_classes=NUM_CLASSES,
     test_dataloader = DataLoader(VideoDataset(dataset=dataset, app='test', clip_len=16),
                                  batch_size=batch_size, num_workers=4)
     train_val_loaders = {'train': train_dataloader, 'val': val_dataloader}
-    test_size = len(test_dataloader.dataset)
 
-    writer = SummaryWriter(log_dir=log_dir)
-    for epoch in range(start_epoch, num_epochs):
-        train_epoch(epoch, train_val_loaders, model, criterion, optimizer, scheduler, writer)
-        if (epoch + 1) % ckpt_interval == 0:
-            save_path = os.path.join(save_dir, model_data_name + '_epoch-' + str(epoch + 1) + '.pth')
-            torch.save({
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'opt_dict': optimizer.state_dict()
-            }, save_path)
-            print(f"Save model at {save_path}\n")
-
-        if use_test and (epoch + 1) % test_interval == 0:
-            model.eval()
-            start_time = timeit.default_timer()
-
-            total_loss = 0.0
-            total_acc = 0.0
-
-            for inputs, labels in tqdm(test_dataloader):
-                inputs = inputs.to(DEVICE)
-                labels = labels.to(DEVICE)
-
-                with torch.no_grad():
-                    outputs = model(inputs)
-                probs = nn.Softmax(dim=1)(outputs)
-                preds = torch.max(probs, 1)[1]
-                loss = criterion(outputs, labels)
-
-                total_loss += loss.item() * inputs.size(0)
-                total_acc += torch.sum(preds == labels.data)
-
-            epoch_loss = total_loss / test_size
-            epoch_acc = total_acc.double() / test_size
-
-            writer.add_scalar('data/test_loss', epoch_loss, epoch)
-            writer.add_scalar('data/test_acc', epoch_acc, epoch)
-
-            print(f"[test] Epoch: {epoch + 1}/{num_epochs} Loss: {epoch_loss} Acc: {epoch_acc}")
-            stop_time = timeit.default_timer()
-            print(f"Execution time: {stop_time - start_time}\n")
-
-    writer.close()
+    with SummaryWriter(log_dir=log_dir) as writer:
+        for epoch in range(start_epoch, num_epochs):
+            # 训练并验证epoch
+            for phase in ['train', 'val']:
+                run_epoch(phase, epoch, train_val_loaders[phase], writer, model, criterion, optimizer, scheduler)
+            # 测试模型
+            if use_test and (epoch + 1) % test_interval == 0:
+                run_epoch('test', epoch, test_dataloader, writer, model, criterion)
+            # 保存模型
+            if (epoch + 1) % ckpt_interval == 0:
+                save_path = os.path.join(save_dir, model_data_name + '_epoch-' + str(epoch + 1) + '.pth')
+                torch.save({
+                    'epoch': epoch + 1,
+                    'state_dict': model.state_dict(),
+                    'opt_dict': optimizer.state_dict()
+                }, save_path)
+                print(f"Save model at {save_path}\n")
 
 
 if __name__ == "__main__":
-    train_model()
+    train()
