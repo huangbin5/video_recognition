@@ -1,3 +1,4 @@
+import time
 import timeit
 from datetime import datetime
 import os
@@ -78,13 +79,14 @@ def _load_param_log(ckpt_path, log_dir, model, optimizer):
 
 
 def _run_epoch(phase, epoch, data_loader, writer, model, criterion, optimizer=None, scheduler=None):
+    time.sleep(0.1)
     # 设置训练或测试模式
     model.train() if phase == 'train' else model.eval()
     start_time = timeit.default_timer()
     total_loss, total_acc = 0.0, 0.0
 
     # 按batch迭代
-    for inputs, labels in tqdm(data_loader):
+    for inputs, labels in tqdm(data_loader, desc=f'Epoch {epoch}/{Hyper.num_epochs} [{phase}]'):
         inputs = inputs.requires_grad_('train' == phase).to(DEVICE)
         labels = labels.to(DEVICE)
         if phase == 'train':
@@ -111,9 +113,9 @@ def _run_epoch(phase, epoch, data_loader, writer, model, criterion, optimizer=No
     writer.add_scalar(f'data/{phase}_loss', epoch_loss, epoch)
     writer.add_scalar(f'data/{phase}_acc', epoch_acc, epoch)
 
-    print(f"[{phase}] Epoch: {epoch}/{Hyper.num_epochs}  Loss: {epoch_loss}  Acc: {epoch_acc}")
+    print(f"Loss: {epoch_loss}  Acc: {epoch_acc}")
     stop_time = timeit.default_timer()
-    print(f"Execution time: {stop_time - start_time}\n")
+    print(f"Execution time: {stop_time - start_time}")
 
 
 def train(start_epoch=Hyper.start_epoch, batch_size=Hyper.batch_size):

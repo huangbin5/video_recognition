@@ -1,6 +1,7 @@
 import os
 import cv2
 import numpy as np
+from tqdm import tqdm
 
 import torch
 from torch.utils.data import Dataset
@@ -22,7 +23,6 @@ class VideoDataset(Dataset):
             raise FileNotFoundError(f'Dataset {dataset} not found. You need to download it first.')
         # 提取视频帧
         if preprocess or (not self.__has_processed()):
-            print(f'Preprocessing {dataset}, please wait...')
             self.__preprocess()
 
         # 获取数据和类别
@@ -43,9 +43,9 @@ class VideoDataset(Dataset):
         # 数据预处理
         buffer = self.__load_frames(self.videos[index])
         buffer = self.__crop(buffer, self.clip_len, self.crop_size)
-        if self.app == 'train':
-            # 数据增强
-            buffer = self.__randomflip(buffer)
+        # if self.app == 'train':
+        #     # 数据增强，好像效果变差了。。。
+        #     buffer = self.__randomflip(buffer)
         buffer = self.__normalize(buffer)
         buffer = self.__to_tensor(buffer)
         return torch.from_numpy(buffer), torch.tensor(self.label_ids[index])
@@ -83,7 +83,7 @@ class VideoDataset(Dataset):
             os.mkdir(os.path.join(self.data_dir, 'val'))
             os.mkdir(os.path.join(self.data_dir, 'test'))
 
-        for action in os.listdir(self.raw_dir):
+        for action in tqdm(os.listdir(self.raw_dir), desc='Preprocessing'):
             action_path = os.path.join(self.raw_dir, action)
             video_files = [video for video in os.listdir(action_path)]
             # 按6:2:2划分训练集、验证集和测试集
@@ -119,6 +119,11 @@ class VideoDataset(Dataset):
         count, num = 0, 0
         while count < frame_count:
             _, frame = capture.read()
+            # read有可能读取失败，可以通过设置读取位置，用retrieve方式读取
+            if frame is None:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, num + 1)
+                _, frame = capture.retrieve()
+            assert frame is not None, f'Unknow error for {action}/{video}/{num + 1}'
             if count % EXTRACT_FREQUENCY == 0:
                 if (frame_height != self.resize_height) or (frame_width != self.resize_width):
                     frame = cv2.resize(frame, (self.resize_width, self.resize_height))
