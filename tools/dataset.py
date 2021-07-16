@@ -9,133 +9,107 @@ from sklearn.model_selection import train_test_split
 from tools.mypath import Path
 
 
-# classes extended Dataset must rewrite __len__ and __getitem__ methods
+# 继承Dataset的类需要重写 __len__ 和 __getitem__ 方法
 class VideoDataset(Dataset):
     def __init__(self, dataset='ucf101', app='train', clip_len=16, preprocess=False):
-        self.raw_dir, self.root_dir = Path.data_dir(dataset)
-        app_dir = os.path.join(self.root_dir, app)
-        self.clip_len = clip_len
-        self.app = app
-
-        # The following three parameters are chosen as described in the paper section 4.1
-        self.resize_height = 128
-        self.resize_width = 171
-        self.crop_size = 112
+        self.raw_dir, self.data_dir = Path.data_dir(dataset)
+        app_dir = os.path.join(self.data_dir, app)
+        self.app, self.clip_len = app, clip_len
+        # 以下是C3D原文中的参数设置
+        self.resize_height, self.resize_width, self.crop_size = 128, 171, 112
 
         if not os.path.exists(self.raw_dir):
-            raise RuntimeError('Dataset not found or corrupted. You need to download it from official website.')
-
-        if (not self.__has_preprocess()) or preprocess:
-            print(f'Preprocessing of {dataset} dataset, this will take long, but it will be done only once.')
+            raise FileNotFoundError(f'Dataset {dataset} not found. You need to download it first.')
+        # 提取视频帧
+        if preprocess or (not self.__has_processed()):
+            print(f'Preprocessing {dataset}, please wait...')
             self.__preprocess()
 
-        # Get all the videos and its label
+        # 获取数据和类别
         self.videos, labels = [], []
-        for label in sorted(os.listdir(app_dir)):
-            for fname in os.listdir(os.path.join(app_dir, label)):
-                self.videos.append(os.path.join(app_dir, label, fname))
-                labels.append(label)
-        assert len(labels) == len(self.videos)
+        for action in sorted(os.listdir(app_dir)):
+            for video in os.listdir(os.path.join(app_dir, action)):
+                self.videos.append(os.path.join(app_dir, action, video))
+                labels.append(action)
         print(f'Number of {app} videos: {len(self.videos):d}')
-
-        # Match each label with an index
-        self.label2index = {label: index for index, label in enumerate(sorted(set(labels)))}
-        # Convert the list of label into its index
-        self.label_array = np.array([self.label2index[label] for label in labels], dtype=int)
-
-        if dataset == "ucf101":
-            label_path = self.__get_path('../labels/ucf_labels.txt')
-            if not os.path.exists(label_path):
-                with open(label_path, 'w') as f:
-                    for ii, label in enumerate(sorted(self.label2index)):
-                        f.writelines(str(ii + 1) + ' ' + label + '\n')
-        elif dataset == 'hmdb51':
-            label_path = self.__get_path('../labels/hmdb_labels.txt')
-            if not os.path.exists(label_path):
-                with open(label_path, 'w') as f:
-                    for ii, label in enumerate(sorted(self.label2index)):
-                        f.writelines(str(ii + 1) + ' ' + label + '\n')
+        # 将类别转化为用数字表示
+        label2index = {label: index for index, label in enumerate(sorted(set(labels)))}
+        self.label_ids = np.array([label2index[label] for label in labels], dtype=int)
 
     def __len__(self):
         return len(self.videos)
 
     def __getitem__(self, index):
-        # Loading and preprocessing.
-        buffer = self.load_frames(self.videos[index])
-        buffer = self.crop(buffer, self.clip_len, self.crop_size)
-        labels = np.array(self.label_array[index])
-
-        if self.app == 'test':
-            # Perform data augmentation
-            buffer = self.randomflip(buffer)
-        buffer = self.normalize(buffer)
-        buffer = self.to_tensor(buffer)
-        return torch.from_numpy(buffer), torch.from_numpy(labels)
+        # 数据预处理
+        buffer = self.__load_frames(self.videos[index])
+        buffer = self.__crop(buffer, self.clip_len, self.crop_size)
+        if self.app == 'train':
+            # 数据增强
+            buffer = self.__randomflip(buffer)
+        buffer = self.__normalize(buffer)
+        buffer = self.__to_tensor(buffer)
+        return torch.from_numpy(buffer), torch.tensor(self.label_ids[index])
 
     def __get_path(self, file):
         if file.startswith('./'):
             file = file[2:]
         return os.path.join(os.path.dirname(__file__), file)
 
-    def __has_preprocess(self):
-        # TODO: Check image size in output_dir
-        train_dir = os.path.join(self.root_dir, 'train')
-        if not os.path.exists(self.root_dir):
+    def __has_processed(self):
+        train_dir = os.path.join(self.data_dir, 'train')
+        if not os.path.exists(self.data_dir):
             return False
         elif not os.path.exists(train_dir):
             return False
 
         empty = True
-        for ii, video_class in enumerate(os.listdir(train_dir)):
-            for video in os.listdir(os.path.join(self.root_dir, 'train', video_class)):
+        for i, video_class in enumerate(os.listdir(train_dir)):
+            for video in os.listdir(os.path.join(self.data_dir, 'train', video_class)):
                 empty = False
-                video_dir = os.path.join(self.root_dir, 'train', video_class, video)
+                video_dir = os.path.join(self.data_dir, 'train', video_class, video)
                 frame_name = os.path.join(video_dir, sorted(os.listdir(video_dir))[0])
                 image = cv2.imread(frame_name)
-                if np.shape(image)[0] != 128 or np.shape(image)[1] != 171:
+                if np.shape(image)[0] != self.resize_height or np.shape(image)[1] != self.resize_width:
                     return False
                 break
-            if ii == 10:
+            if i == 10:
                 break
         return not empty
 
     def __preprocess(self):
-        if not os.path.exists(self.root_dir):
-            os.makedirs(self.root_dir)
-            os.mkdir(os.path.join(self.root_dir, 'train'))
-            os.mkdir(os.path.join(self.root_dir, 'val'))
-            os.mkdir(os.path.join(self.root_dir, 'test'))
+        if not os.path.exists(self.data_dir):
+            os.makedirs(self.data_dir)
+            os.mkdir(os.path.join(self.data_dir, 'train'))
+            os.mkdir(os.path.join(self.data_dir, 'val'))
+            os.mkdir(os.path.join(self.data_dir, 'test'))
 
-        # Split train/val/test sets
         for action in os.listdir(self.raw_dir):
             action_path = os.path.join(self.raw_dir, action)
             video_files = [video for video in os.listdir(action_path)]
-
-            train_and_valid, test = train_test_split(video_files, test_size=0.2, random_state=42)
-            train, val = train_test_split(train_and_valid, test_size=0.2, random_state=42)
+            # 按6:2:2划分训练集、验证集和测试集
+            train_and_valid, test_set = train_test_split(video_files, test_size=0.2, random_state=42)
+            train_set, val_set = train_test_split(train_and_valid, test_size=0.2, random_state=42)
 
             train_dir, val_dir, test_dir = [
-                os.path.join(self.root_dir, app, action) for app in ['train', 'val', 'test']]
-            for app, app_dir in zip([train, val, test], [train_dir, val_dir, test_dir]):
+                os.path.join(self.data_dir, app, action) for app in ['train', 'val', 'test']]
+            for app_set, app_dir in zip([train_set, val_set, test_set], [train_dir, val_dir, test_dir]):
                 if not os.path.exists(app_dir):
                     os.mkdir(app_dir)
-                for video in app:
+                for video in app_set:
                     self.__process_video(video, action, app_dir)
-        print('Preprocessing finished.')
+        print('Preprocess done.')
 
-    def __process_video(self, video, action_name, save_dir):
-        # Initialize a VideoCapture object to read video data into a numpy array
-        video_filename = video.split('.')[0]
-        video_dir = os.path.join(save_dir, video_filename)
+    def __process_video(self, video, action, action_dir):
+        video_name = video.split('.')[0]
+        video_dir = os.path.join(action_dir, video_name)
         if not os.path.exists(video_dir):
             os.mkdir(video_dir)
-
-        capture = cv2.VideoCapture(os.path.join(self.raw_dir, action_name, video))
+        # 视频读取器
+        capture = cv2.VideoCapture(os.path.join(self.raw_dir, action, video))
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
         frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-        # Make sure splited video has at least 16 frames
+        # 最多每4帧读取1帧，如果帧数太少则减小读取频率，确保至少能够读到16帧
         EXTRACT_FREQUENCY = 4
         while EXTRACT_FREQUENCY > 1:
             if frame_count // EXTRACT_FREQUENCY > 16:
@@ -145,64 +119,43 @@ class VideoDataset(Dataset):
         count, num = 0, 0
         while count < frame_count:
             _, frame = capture.read()
-            if frame is None:
-                break
             if count % EXTRACT_FREQUENCY == 0:
                 if (frame_height != self.resize_height) or (frame_width != self.resize_width):
                     frame = cv2.resize(frame, (self.resize_width, self.resize_height))
-                cv2.imwrite(filename=os.path.join(save_dir, video_filename, '0000{}.jpg'.format(str(num))), img=frame)
+                cv2.imwrite(filename=os.path.join(video_dir, '0000{}.jpg'.format(str(num))), img=frame)
                 num += 1
             count += 1
-
-        # Release the VideoCapture once it is no longer needed
         capture.release()
 
-    def randomflip(self, buffer):
-        """Horizontally flip the given image and ground truth randomly with a probability of 0.5."""
+    def __load_frames(self, video_dir):
+        frames = sorted([os.path.join(video_dir, img) for img in os.listdir(video_dir)])
+        buffer = np.empty((len(frames), self.resize_height, self.resize_width, 3), np.dtype('float32'))
+        for i, frame in enumerate(frames):
+            buffer[i] = np.array(cv2.imread(frame)).astype(np.float64)
+        return buffer
 
+    def __crop(self, buffer, clip_len, crop_size):
+        # 帧不是完全随机选取，而是随机起始位置选取连续的帧
+        t = np.random.randint(buffer.shape[0] - clip_len)
+        # 空间起始位置也是随机的
+        h = np.random.randint(buffer.shape[1] - crop_size)
+        w = np.random.randint(buffer.shape[2] - crop_size)
+        return buffer[t:t + clip_len, h:h + crop_size, w:w + crop_size, :]
+
+    def __randomflip(self, buffer):
         if np.random.random() < 0.5:
-            for i, frame in enumerate(buffer):
-                frame = cv2.flip(buffer[i], flipCode=1)
-                buffer[i] = cv2.flip(frame, flipCode=1)
-
+            for i in range(buffer.shape[0]):
+                buffer[i] = cv2.flip(buffer[i], flipCode=1)
         return buffer
 
-    def normalize(self, buffer):
-        for i, frame in enumerate(buffer):
-            frame -= np.array([[[90.0, 98.0, 102.0]]])
-            buffer[i] = frame
-
+    def __normalize(self, buffer):
+        for i in range(buffer.shape[0]):
+            buffer[i] -= np.array([[[90.0, 98.0, 102.0]]])
         return buffer
 
-    def to_tensor(self, buffer):
+    def __to_tensor(self, buffer):
+        # (time, height, width, channel) -> (channel, time, height, width)
         return buffer.transpose((3, 0, 1, 2))
-
-    def load_frames(self, file_dir):
-        frames = sorted([os.path.join(file_dir, img) for img in os.listdir(file_dir)])
-        frame_count = len(frames)
-        buffer = np.empty((frame_count, self.resize_height, self.resize_width, 3), np.dtype('float32'))
-        for i, frame_name in enumerate(frames):
-            frame = np.array(cv2.imread(frame_name)).astype(np.float64)
-            buffer[i] = frame
-
-        return buffer
-
-    def crop(self, buffer, clip_len, crop_size):
-        # randomly select time index for temporal jittering
-        time_index = np.random.randint(buffer.shape[0] - clip_len)
-
-        # Randomly select start indices in order to crop the video
-        height_index = np.random.randint(buffer.shape[1] - crop_size)
-        width_index = np.random.randint(buffer.shape[2] - crop_size)
-
-        # Crop and jitter the video using indexing. The spatial crop is performed on
-        # the entire array, so each frame is cropped in the same location. The temporal
-        # jitter takes place via the selection of consecutive frames
-        buffer = buffer[
-                 time_index:time_index + clip_len,
-                 height_index:height_index + crop_size,
-                 width_index:width_index + crop_size, :]
-        return buffer
 
 
 if __name__ == "__main__":
@@ -216,6 +169,4 @@ if __name__ == "__main__":
         labels = sample[1]
         print(inputs.size())
         print(labels)
-
-        if i == 1:
-            break
+        break

@@ -71,8 +71,8 @@ def _load_param_log(ckpt_path, log_dir, model, optimizer):
     model.load_state_dict(checkpoint['state_dict'])
     optimizer.load_state_dict(checkpoint['opt_dict'])
     # 合并日志
-    log_his = sorted(os.path.join(SAVE_DIR, t) for t in os.listdir(SAVE_DIR)
-                     if os.path.isdir(os.path.join(SAVE_DIR, t)))
+    log_his = sorted(os.path.join(SAVE_DIR, log) for log in os.listdir(SAVE_DIR)
+                     if os.path.isdir(os.path.join(SAVE_DIR, log)))
     last_log_dir = log_his[-1] if log_his else None
     shutil.copytree(last_log_dir, log_dir)
 
@@ -133,7 +133,7 @@ def train(start_epoch=Hyper.start_epoch, batch_size=Hyper.batch_size):
     else:
         ckpt_path = os.path.join(SAVE_DIR, model_data_name + '_epoch-' + str(start_epoch) + '.pth')
         _load_param_log(ckpt_path, log_dir, model, optimizer)
-    print(f'Total params: {sum(t.numel() for t in model.parameters()) / 1000000.0:.2f}M')
+    print(f'Total params: {sum(p.numel() for p in model.parameters()) / 1000000.0:.2f}M')
 
     # 加载数据
     train_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='train', clip_len=16),

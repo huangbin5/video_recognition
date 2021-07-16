@@ -106,7 +106,6 @@ venv.bak/
 
 # ignore data and model
 model/
-labels/
 dataraw/
 data/*
 log/

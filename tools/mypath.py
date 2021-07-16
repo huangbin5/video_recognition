@@ -13,14 +13,11 @@ class Path(object):
             root_dir = '/path/to/VAR/hmdb51'
             return Path.__get_path(raw_dir), Path.__get_path(root_dir)
         else:
-            print('Database {} not available.'.format(database))
-            print('Currently only support ucf101 and hmdb51')
-            raise NotImplementedError
+            raise NotImplementedError('Only ucf101 and hmdb51 datasets are supported.')
 
     @staticmethod
     def model_dir():
-        # model path
-        return Path.__get_path('../model/c3d-pretrained.pth')
+        return Path.__get_path('../model/c3d-pretrained.pth')  # 预训练模型参数
 
     @staticmethod
     def __get_path(file):
