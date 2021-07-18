@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import Dataset
 from sklearn.model_selection import train_test_split
 
-from tools.mypath import Path
+from other.config import Path
 
 
 # 继承Dataset的类需要重写 __len__ 和 __getitem__ 方法
@@ -35,6 +35,12 @@ class VideoDataset(Dataset):
         # 将类别转化为用数字表示
         label2index = {label: index for index, label in enumerate(sorted(set(labels)))}
         self.label_ids = np.array([label2index[label] for label in labels], dtype=int)
+        # 用于测试
+        label_path = self.__get_path(f'../labels/{dataset}_labels.txt')
+        if not os.path.exists(label_path):
+            with open(label_path, 'w') as f:
+                for i, label in enumerate(label2index):
+                    f.writelines(str(i + 1) + ' ' + label + '\n')
 
     def __len__(self):
         return len(self.videos)
@@ -97,7 +103,6 @@ class VideoDataset(Dataset):
                     os.mkdir(app_dir)
                 for video in app_set:
                     self.__process_video(video, action, app_dir)
-        print('Preprocess done.')
 
     def __process_video(self, video, action, action_dir):
         video_name = video.split('.')[0]
@@ -155,6 +160,7 @@ class VideoDataset(Dataset):
 
     def __normalize(self, buffer):
         for i in range(buffer.shape[0]):
+            # todo: 为什么用这3个数归一化？？？
             buffer[i] -= np.array([[[90.0, 98.0, 102.0]]])
         return buffer
 

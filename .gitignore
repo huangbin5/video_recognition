@@ -108,5 +108,6 @@ venv.bak/
 model/
 dataraw/
 data/*
+labels/
 log/
 tmp.py

@@ -1,9 +1,13 @@
 import torch
 import torch.nn as nn
-from tools.mypath import Path
+from other.config import Path
 
 
 class C3D(nn.Module):
+    """
+    一共8个卷积层和5个池化层
+    """
+
     def __init__(self, num_classes, pretrained=False):
         super(C3D, self).__init__()
 
@@ -30,16 +34,13 @@ class C3D(nn.Module):
         self.fc8 = nn.Linear(4096, num_classes)
 
         self.dropout = nn.Dropout(p=0.5)
-
         self.relu = nn.ReLU()
 
         self.__init_weight()
-
         if pretrained:
             self.__load_pretrained_weights()
 
     def forward(self, x):
-
         x = self.relu(self.conv1(x))
         x = self.pool1(x)
 
@@ -63,13 +64,17 @@ class C3D(nn.Module):
         x = self.dropout(x)
         x = self.relu(self.fc7(x))
         x = self.dropout(x)
+        return self.fc8(x)
 
-        logits = self.fc8(x)
-
-        return logits
+    def __init_weight(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv3d):
+                nn.init.kaiming_normal_(m.weight)
+            elif isinstance(m, nn.BatchNorm3d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
 
     def __load_pretrained_weights(self):
-        """Initialiaze network."""
         corresp_name = {
             # Conv1
             "features.0.weight": "conv1.weight",
@@ -102,7 +107,6 @@ class C3D(nn.Module):
             "classifier.3.weight": "fc7.weight",
             "classifier.3.bias": "fc7.bias",
         }
-
         p_dict = torch.load(Path.model_dir())
         s_dict = self.state_dict()
         for name in p_dict:
@@ -110,42 +114,25 @@ class C3D(nn.Module):
                 s_dict[corresp_name[name]] = p_dict[name]
         self.load_state_dict(s_dict)
 
-    def __init_weight(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv3d):
-                # n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                # m.weight.data.normal_(0, math.sqrt(2. / n))
-                torch.nn.init.kaiming_normal_(m.weight)
-            elif isinstance(m, nn.BatchNorm3d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
+    def get_1x_lr_params(self):
+        layers = [self.conv1, self.conv2, self.conv3a, self.conv3b, self.conv4a, self.conv4b,
+                  self.conv5a, self.conv5b, self.fc6, self.fc7]
+        for l in layers:
+            for p in l.parameters():
+                if p.requires_grad:
+                    yield p
 
-
-def get_1x_lr_params(model):
-    """
-    This generator returns all the parameters for conv and two fc layers of the net.
-    """
-    b = [model.conv1, model.conv2, model.conv3a, model.conv3b, model.conv4a, model.conv4b,
-         model.conv5a, model.conv5b, model.fc6, model.fc7]
-    for m in b:
-        for k in m.parameters():
-            if k.requires_grad:
-                yield k
-
-
-def get_10x_lr_params(model):
-    """
-    This generator returns all the parameters for the last fc layer of the net.
-    """
-    m = model.fc8
-    for k in m.parameters():
-        if k.requires_grad:
-            yield k
+    def get_10x_lr_params(self):
+        layer = self.fc8
+        for p in layer.parameters():
+            if p.requires_grad:
+                yield p
 
 
 if __name__ == "__main__":
     inputs = torch.rand(1, 3, 16, 112, 112)
     net = C3D(num_classes=101, pretrained=True)
 
-    outputs = net.forward(inputs)
+    outputs = net(inputs)
     print(outputs.size())
+    print(net.get_10x_lr_params())

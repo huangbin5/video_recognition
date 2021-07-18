@@ -11,8 +11,10 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 
-from tools.dataset import VideoDataset
-from network import C3D_model, R2Plus1D_model, R3D_model
+from other.dataset import VideoDataset
+from other.config import DATASET, MODEL_NAME, NUM_CLASSES, get_device
+from network.C3D_model import C3D
+from network import R2Plus1D_model, R3D_model
 
 
 class Hyper:
@@ -25,26 +27,13 @@ class Hyper:
     ckpt_interval = 5  # 模型参数保存的间隔
 
 
-# 已实现的数据集和模型
-ALL_DATASETS = {'ucf101': 101, 'hmdb51': 51}
-ALL_MODEL = ['C3D', 'R2Plus1D', 'R3D']
-
 # 尝试使用GPU
-DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print(f"Device being used: {DEVICE}")
-
-DATASET, MODEL_NAME = 'ucf101', 'C3D'
-if DATASET not in ALL_DATASETS:
-    raise NotImplementedError('Only ucf101 and hmdb51 datasets are supported.')
-NUM_CLASSES = ALL_DATASETS[DATASET]
-if MODEL_NAME not in ALL_MODEL:
-    raise NotImplementedError('Only C3D, R2Plus1D and R3D models are supported.')
-
+DEVICE = get_device()
 # 获取本次run保存的路径
 SAVE_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log')
 runs = glob.glob(os.path.join(SAVE_ROOT, 'run_*'))
-runs = sorted([int(run.split('_')[-1]) for run in runs])
-run_id = runs[-1] if runs else 0
+run_ids = sorted([int(run.split('_')[-1]) for run in runs])
+run_id = run_ids[-1] if run_ids else 0
 if Hyper.start_epoch == 0:
     run_id += 1
 SAVE_DIR = os.path.join(SAVE_ROOT, 'run_' + str(run_id))
@@ -52,9 +41,9 @@ SAVE_DIR = os.path.join(SAVE_ROOT, 'run_' + str(run_id))
 
 def _init_model(lr=Hyper.lr):
     if MODEL_NAME == 'C3D':
-        model = C3D_model.C3D(num_classes=NUM_CLASSES, pretrained=True)
-        train_params = [{'params': C3D_model.get_1x_lr_params(model), 'lr': lr},
-                        {'params': C3D_model.get_10x_lr_params(model), 'lr': lr * 10}]
+        model = C3D(num_classes=NUM_CLASSES, pretrained=True)
+        train_params = [{'params': model.get_1x_lr_params(), 'lr': lr},
+                        {'params': model.get_10x_lr_params(), 'lr': lr * 10}]
     elif MODEL_NAME == 'R2Plus1D':
         model = R2Plus1D_model.R2Plus1DClassifier(num_classes=NUM_CLASSES, layer_sizes=(2, 2, 2, 2))
         train_params = [{'params': R2Plus1D_model.get_1x_lr_params(model), 'lr': lr},
@@ -79,7 +68,7 @@ def _load_param_log(ckpt_path, log_dir, model, optimizer):
 
 
 def _run_epoch(phase, epoch, data_loader, writer, model, criterion, optimizer=None, scheduler=None):
-    time.sleep(0.1)
+    time.sleep(0.05)
     # 设置训练或测试模式
     model.train() if phase == 'train' else model.eval()
     start_time = timeit.default_timer()
@@ -119,6 +108,15 @@ def _run_epoch(phase, epoch, data_loader, writer, model, criterion, optimizer=No
 
 
 def train(start_epoch=Hyper.start_epoch, batch_size=Hyper.batch_size):
+    # 加载数据
+    train_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='train', clip_len=16),
+                                  batch_size=batch_size, shuffle=True, num_workers=4)
+    val_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='val', clip_len=16),
+                                batch_size=batch_size, num_workers=4)
+    test_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='test', clip_len=16),
+                                 batch_size=batch_size, num_workers=4)
+    train_val_loaders = {'train': train_dataloader, 'val': val_dataloader}
+
     # 模型、策略、算法
     model, train_params = _init_model()
     model.to(DEVICE)
@@ -128,23 +126,14 @@ def train(start_epoch=Hyper.start_epoch, batch_size=Hyper.batch_size):
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
     # 恢复模型和log
-    model_data_name = MODEL_NAME + '@' + DATASET
+    model_data_name = f'{MODEL_NAME}@{DATASET}'
     log_dir = os.path.join(SAVE_DIR, datetime.now().strftime('%y%m%d_%H%M%S'))
     if start_epoch == 0:
         print(f"Training {model_data_name} from scratch...")
     else:
-        ckpt_path = os.path.join(SAVE_DIR, model_data_name + '_epoch-' + str(start_epoch) + '.pth')
+        ckpt_path = os.path.join(SAVE_DIR, f'{model_data_name}_epoch-{str(start_epoch)}.pth')
         _load_param_log(ckpt_path, log_dir, model, optimizer)
     print(f'Total params: {sum(p.numel() for p in model.parameters()) / 1000000.0:.2f}M')
-
-    # 加载数据
-    train_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='train', clip_len=16),
-                                  batch_size=batch_size, shuffle=True, num_workers=4)
-    val_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='val', clip_len=16),
-                                batch_size=batch_size, num_workers=4)
-    test_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='test', clip_len=16),
-                                 batch_size=batch_size, num_workers=4)
-    train_val_loaders = {'train': train_dataloader, 'val': val_dataloader}
 
     with SummaryWriter(log_dir=log_dir) as writer:
         for epoch in range(start_epoch, Hyper.num_epochs):
@@ -157,7 +146,7 @@ def train(start_epoch=Hyper.start_epoch, batch_size=Hyper.batch_size):
                 _run_epoch('test', epoch, test_dataloader, writer, model, criterion)
             # 保存模型
             if epoch % Hyper.ckpt_interval == 0:
-                save_path = os.path.join(SAVE_DIR, model_data_name + '_epoch-' + str(epoch) + '.pth')
+                save_path = os.path.join(SAVE_DIR, f'{model_data_name}_epoch-{str(epoch)}.pth')
                 torch.save({
                     'epoch': epoch,
                     'state_dict': model.state_dict(),
