@@ -7,13 +7,13 @@ import torch
 from torch.utils.data import Dataset
 from sklearn.model_selection import train_test_split
 
-from other.config import Path
+from utils.config import Path
 
 
 # 继承Dataset的类需要重写 __len__ 和 __getitem__ 方法
 class VideoDataset(Dataset):
-    def __init__(self, dataset='ucf101', app='train', clip_len=16, preprocess=False):
-        self.raw_dir, self.data_dir = Path.data_dir(dataset)
+    def __init__(self, dataset='ucf101', app='train', clip_len=16, preprocess=False, all_data=False):
+        self.raw_dir, self.data_dir = Path.data_dir(dataset, all_data)
         app_dir = os.path.join(self.data_dir, app)
         self.app, self.clip_len = app, clip_len
         # 以下是C3D原文中的参数设置

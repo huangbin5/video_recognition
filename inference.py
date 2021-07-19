@@ -7,7 +7,7 @@ import torch
 from torch import nn
 
 from network.C3D_model import C3D
-from other.config import DATASET, MODEL_NAME, get_device, Path
+from utils.config import (DATASET, MODEL_NAME, get_device, Path)
 
 
 def _get_checkpoint():

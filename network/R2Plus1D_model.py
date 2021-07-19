@@ -60,9 +60,9 @@ class SpatioTemporalConv(nn.Module):
             # masking out the values with the defaults on the axis that
             # won't be convolved over. This is necessary to avoid unintentional
             # behavior such as padding being added twice
-            spatial_kernel_size =  (1, kernel_size[1], kernel_size[2])
-            spatial_stride =  (1, stride[1], stride[2])
-            spatial_padding =  (0, padding[1], padding[2])
+            spatial_kernel_size = (1, kernel_size[1], kernel_size[2])
+            spatial_stride = (1, stride[1], stride[2])
+            spatial_padding = (0, padding[1], padding[2])
 
             temporal_kernel_size = (kernel_size[0], 1, 1)
             temporal_stride = (stride[0], 1, 1)
@@ -70,13 +70,14 @@ class SpatioTemporalConv(nn.Module):
 
             # compute the number of intermediary channels (M) using formula
             # from the paper section 3.5
-            intermed_channels = int(math.floor((kernel_size[0] * kernel_size[1] * kernel_size[2] * in_channels * out_channels)/ \
-                                (kernel_size[1] * kernel_size[2] * in_channels + kernel_size[0] * out_channels)))
+            intermed_channels = int(
+                math.floor((kernel_size[0] * kernel_size[1] * kernel_size[2] * in_channels * out_channels) / \
+                           (kernel_size[1] * kernel_size[2] * in_channels + kernel_size[0] * out_channels)))
 
             # the spatial conv is effectively a 2D conv due to the
             # spatial_kernel_size, followed by batch_norm and ReLU
             self.spatial_conv = nn.Conv3d(in_channels, intermed_channels, spatial_kernel_size,
-                                        stride=spatial_stride, padding=spatial_padding, bias=bias)
+                                          stride=spatial_stride, padding=spatial_padding, bias=bias)
             self.bn1 = nn.BatchNorm3d(intermed_channels)
 
             # the temporal conv is effectively a 1D conv, but has batch norm
@@ -85,11 +86,9 @@ class SpatioTemporalConv(nn.Module):
             # identical to a standard Conv3D, so it can be reused easily in any
             # other codebase
             self.temporal_conv = nn.Conv3d(intermed_channels, out_channels, temporal_kernel_size,
-                                        stride=temporal_stride, padding=temporal_padding, bias=bias)
+                                           stride=temporal_stride, padding=temporal_padding, bias=bias)
             self.bn2 = nn.BatchNorm3d(out_channels)
             self.relu = nn.ReLU()
-
-
 
     def forward(self, x):
         x = self.relu(self.bn1(self.spatial_conv(x)))
@@ -288,8 +287,10 @@ def get_10x_lr_params(model):
             if k.requires_grad:
                 yield k
 
+
 if __name__ == "__main__":
     import torch
+
     inputs = torch.rand(1, 3, 16, 112, 112)
     net = R2Plus1DClassifier(101, (2, 2, 2, 2), pretrained=False)
 

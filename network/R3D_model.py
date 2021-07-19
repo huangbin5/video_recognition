@@ -26,12 +26,10 @@ class SpatioTemporalConv(nn.Module):
         stride = _triple(stride)
         padding = _triple(padding)
 
-
         self.temporal_spatial_conv = nn.Conv3d(in_channels, out_channels, kernel_size,
-                                    stride=stride, padding=padding, bias=bias)
+                                               stride=stride, padding=padding, bias=bias)
         self.bn = nn.BatchNorm3d(out_channels)
         self.relu = nn.ReLU()
-
 
     def forward(self, x):
         x = self.bn(self.temporal_spatial_conv(x))
@@ -229,8 +227,10 @@ def get_10x_lr_params(model):
             if k.requires_grad:
                 yield k
 
+
 if __name__ == "__main__":
     import torch
+
     inputs = torch.rand(1, 3, 16, 112, 112)
     net = R3DClassifier(101, (2, 2, 2, 2), pretrained=True)
 

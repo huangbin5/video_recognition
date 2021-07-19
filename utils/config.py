@@ -1,4 +1,5 @@
 import os
+import argparse
 import torch
 
 # 已实现的数据集和模型
@@ -15,9 +16,11 @@ if MODEL_NAME not in ALL_MODEL:
 
 class Path(object):
     @staticmethod
-    def data_dir(database):
+    def data_dir(database, all_data):
         if database == 'ucf101':
-            raw_dir = '../dataraw/UCF101_'  # 原始数据的路径
+            raw_dir = '../dataraw/UCF101'  # 原始数据的路径
+            if not all_data:
+                raw_dir += '_'
         elif database == 'hmdb51':
             raw_dir = '/Path/to/hmdb-51'
         else:
@@ -42,3 +45,17 @@ def get_device(is_test=False):
     DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Device being used: {DEVICE}")
     return DEVICE
+
+
+def get_hyper_parameter():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--batch_size', dest='batch_size', type=int, default=15, help='size of a batch')
+    parser.add_argument('--lr', dest='lr', type=float, default=1e-3, help='learning rate')
+    parser.add_argument('--num_epochs', dest='num_epochs', type=int, default=100, help='epochs of training')
+    parser.add_argument('--start_epoch', dest='start_epoch', type=int, default=0, help='start epoch of training')
+    parser.add_argument('--use_test', dest='use_test', type=bool, default=True, help='use testset to evaluate')
+    parser.add_argument('--test_interval', dest='test_interval', type=int, default=5, help='interval of USE_TEST')
+    parser.add_argument('--ckpt_interval', dest='ckpt_interval', type=int, default=5,
+                        help='interval of saving checkpoint')
+    parser.add_argument('--all_data', dest='all_data', type=bool, default=False, help='use all data for training')
+    return parser.parse_args()

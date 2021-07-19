@@ -1,5 +1,4 @@
 import time
-import timeit
 from datetime import datetime
 import os
 import glob
@@ -11,22 +10,22 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 
-from other.dataset import VideoDataset
-from other.config import DATASET, MODEL_NAME, NUM_CLASSES, get_device
+from utils.dataset import VideoDataset
+from utils.config import (DATASET, MODEL_NAME, NUM_CLASSES, get_device, get_hyper_parameter)
 from network.C3D_model import C3D
 from network import R2Plus1D_model, R3D_model
 
-
-class Hyper:
-    batch_size = 15  # 8G GPU支持 batch_size 最大为 15
-    lr = 1e-3
-    num_epochs = 100
-    start_epoch = 0  # 从已保存的哪个epoch接着训练
-    use_test = True  # 训练过程中是否在测试集计算指标
-    test_interval = 5  # 使用测试集计算的间隔
-    ckpt_interval = 5  # 模型参数保存的间隔
-
-
+'''
+batch_size: 8G GPU支持 batch_size 最大为 15
+lr: 学习率
+num_epochs: 迭代总epoch数
+start_epoch: 从已保存的哪个epoch接着训练
+use_test: 训练过程中是否在测试集计算指标
+test_interval: 使用测试集计算的间隔
+ckpt_interval: 保存模型参数的间隔
+all_data: 是否使用全部数据训练。在调代码时使用部分数据集更加方便
+'''
+Hyper = get_hyper_parameter()
 # 尝试使用GPU
 DEVICE = get_device()
 # 获取本次run保存的路径
@@ -71,7 +70,6 @@ def _run_epoch(phase, epoch, data_loader, writer, model, criterion, optimizer=No
     time.sleep(0.05)
     # 设置训练或测试模式
     model.train() if phase == 'train' else model.eval()
-    start_time = timeit.default_timer()
     total_loss, total_acc = 0.0, 0.0
 
     # 按batch迭代
@@ -101,19 +99,16 @@ def _run_epoch(phase, epoch, data_loader, writer, model, criterion, optimizer=No
     # 记录每个epoch的指标
     writer.add_scalar(f'data/{phase}_loss', epoch_loss, epoch)
     writer.add_scalar(f'data/{phase}_acc', epoch_acc, epoch)
-
-    print(f"Loss: {epoch_loss}  Acc: {epoch_acc}")
-    stop_time = timeit.default_timer()
-    print(f"Execution time: {stop_time - start_time}")
+    print(f"Loss: {epoch_loss}  Acc: {epoch_acc}\n")
 
 
 def train(start_epoch=Hyper.start_epoch, batch_size=Hyper.batch_size):
     # 加载数据
-    train_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='train', clip_len=16),
+    train_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='train', clip_len=16, all_data=Hyper.all_data),
                                   batch_size=batch_size, shuffle=True, num_workers=4)
-    val_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='val', clip_len=16),
+    val_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='val', clip_len=16, all_data=Hyper.all_data),
                                 batch_size=batch_size, num_workers=4)
-    test_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='test', clip_len=16),
+    test_dataloader = DataLoader(VideoDataset(dataset=DATASET, app='test', clip_len=16, all_data=Hyper.all_data),
                                  batch_size=batch_size, num_workers=4)
     train_val_loaders = {'train': train_dataloader, 'val': val_dataloader}
 

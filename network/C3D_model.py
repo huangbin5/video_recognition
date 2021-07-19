@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from other.config import Path
+from utils.config import Path
 
 
 class C3D(nn.Module):
