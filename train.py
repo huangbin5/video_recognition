@@ -36,6 +36,7 @@ run_id = run_ids[-1] if run_ids else 0
 if Hyper.start_epoch == 0:
     run_id += 1
 SAVE_DIR = os.path.join(SAVE_ROOT, 'run_' + str(run_id))
+MIN_LOSS, EARLY_STOP = None, 0
 
 
 def _init_model(lr=Hyper.lr):
@@ -86,20 +87,34 @@ def _run_epoch(phase, epoch, data_loader, writer, model, criterion, optimizer=No
         if phase == 'train':
             loss.backward()
             optimizer.step()
+
         # 计算指标
         total_loss += loss.item() * inputs.size(0)
         preds = torch.max(nn.Softmax(dim=1)(outputs), dim=1)[1]
         total_acc += torch.sum(preds == labels.data)
     epoch_loss = total_loss / len(data_loader.dataset)
     epoch_acc = total_acc.double() / len(data_loader.dataset)
-
-    if phase == 'train':
-        # 衰减学习率
-        scheduler.step()
     # 记录每个epoch的指标
     writer.add_scalar(f'data/{phase}_loss', epoch_loss, epoch)
     writer.add_scalar(f'data/{phase}_acc', epoch_acc, epoch)
     print(f"Loss: {epoch_loss}  Acc: {epoch_acc}\n")
+
+    if phase == 'train':
+        # 衰减学习率
+        scheduler.step()
+    elif phase == 'val':
+        global MIN_LOSS, EARLY_STOP
+        if MIN_LOSS is None or epoch_loss < MIN_LOSS:
+            # 保存验证集上损失更小的模型
+            MIN_LOSS, EARLY_STOP = epoch_loss, 0
+            torch.save({
+                'epoch': epoch,
+                'state_dict': model.state_dict(),
+                'opt_dict': optimizer.state_dict()
+            }, os.path.join(SAVE_DIR, f'{MODEL_NAME}@{DATASET}_best.pth.tar'))
+            print('Save best model.')
+        else:
+            EARLY_STOP += 1
 
 
 def train(start_epoch=Hyper.start_epoch, batch_size=Hyper.batch_size):
@@ -126,7 +141,7 @@ def train(start_epoch=Hyper.start_epoch, batch_size=Hyper.batch_size):
     if start_epoch == 0:
         print(f"Training {model_data_name} from scratch...")
     else:
-        ckpt_path = os.path.join(SAVE_DIR, f'{model_data_name}_epoch-{str(start_epoch)}.pth')
+        ckpt_path = os.path.join(SAVE_DIR, f'{model_data_name}_epoch-{str(start_epoch)}.pth.tar')
         _load_param_log(ckpt_path, log_dir, model, optimizer)
     print(f'Total params: {sum(p.numel() for p in model.parameters()) / 1000000.0:.2f}M')
 
@@ -136,12 +151,16 @@ def train(start_epoch=Hyper.start_epoch, batch_size=Hyper.batch_size):
             # 训练并验证epoch
             for phase in ['train', 'val']:
                 _run_epoch(phase, epoch, train_val_loaders[phase], writer, model, criterion, optimizer, scheduler)
+                # 模型已经不能再优化了，提前结束训练
+                if EARLY_STOP >= Hyper.early_stop:
+                    print('There is no optimization for a long time, stop training!!!')
+                    return
             # 测试模型
             if Hyper.use_test and epoch % Hyper.test_interval == 0:
                 _run_epoch('test', epoch, test_dataloader, writer, model, criterion)
             # 保存模型
             if epoch % Hyper.ckpt_interval == 0:
-                save_path = os.path.join(SAVE_DIR, f'{model_data_name}_epoch-{str(epoch)}.pth')
+                save_path = os.path.join(SAVE_DIR, f'{model_data_name}_epoch-{str(epoch)}.pth.tar')
                 torch.save({
                     'epoch': epoch,
                     'state_dict': model.state_dict(),

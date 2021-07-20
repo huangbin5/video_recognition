@@ -13,18 +13,18 @@ from utils.config import (DATASET, MODEL_NAME, get_device, Path)
 def _get_checkpoint():
     CHECKPOINT_NOT_FOUND_ERROR = f'Checkpoint not found, you need to train {MODEL_NAME} first.'
 
+    # 找到最后一次run的文件夹
     SAVE_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log')
     runs = glob.glob(os.path.join(SAVE_ROOT, 'run_*'))
     run_ids = sorted([int(run.split('_')[-1]) for run in runs])
     assert run_ids, CHECKPOINT_NOT_FOUND_ERROR
     SAVE_DIR = os.path.join(SAVE_ROOT, 'run_' + str(run_ids[-1]))
 
-    epochs = sorted(int(point.split('-')[-1][:-len('.pth')]) for point in os.listdir(SAVE_DIR)
-                    if os.path.isfile(os.path.join(SAVE_DIR, point)))
-    assert epochs, CHECKPOINT_NOT_FOUND_ERROR
-    checkpoint = f'{MODEL_NAME}@{DATASET}_epoch-{epochs[-1]}.pth'
-    print(f'Inference on checkpoint run_{run_ids[-1]}/{checkpoint}')
-    return torch.load(os.path.join(SAVE_DIR, checkpoint), map_location=lambda storage, loc: storage)
+    # 找到best model
+    best_model = os.path.join(SAVE_DIR, f'{MODEL_NAME}@{DATASET}_best.pth.tar')
+    assert os.path.exists(best_model), CHECKPOINT_NOT_FOUND_ERROR
+    print(f'Inference on checkpoint {"/".join(best_model.split("/")[-2:])}')
+    return torch.load(best_model, map_location=lambda storage, loc: storage)
 
 
 def _preprocess(frame):
@@ -52,7 +52,7 @@ def inference():
     model.eval()
 
     # video = os.path.join(Path.data_dir(DATASET)[0], 'Basketball/v_Basketball_g01_c03.avi')
-    video = os.path.join(os.path.dirname(__file__), 'data', '007.mp4')
+    video = os.path.join(os.path.dirname(__file__), 'data', '001.mp4')
     capture, clip = cv2.VideoCapture(video), []
     while True:
         has_more, frame = capture.read()

@@ -49,13 +49,22 @@ def get_device(is_test=False):
 
 def get_hyper_parameter():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--batch_size', dest='batch_size', type=int, default=15, help='size of a batch')
-    parser.add_argument('--lr', dest='lr', type=float, default=1e-3, help='learning rate')
-    parser.add_argument('--num_epochs', dest='num_epochs', type=int, default=100, help='epochs of training')
-    parser.add_argument('--start_epoch', dest='start_epoch', type=int, default=0, help='start epoch of training')
-    parser.add_argument('--use_test', dest='use_test', type=bool, default=True, help='use testset to evaluate')
-    parser.add_argument('--test_interval', dest='test_interval', type=int, default=5, help='interval of USE_TEST')
+    parser.add_argument('--batch_size', dest='batch_size', type=int, default=15,
+                        help='size of a batch (default: 15)')
+    parser.add_argument('--lr', dest='lr', type=float, default=1e-3,
+                        help='learning rate (default: 1e-3)')
+    parser.add_argument('--num_epochs', dest='num_epochs', type=int, default=100,
+                        help='epochs of training (default: 100)')
+    parser.add_argument('--start_epoch', dest='start_epoch', type=int, default=0,
+                        help='start epoch of training (default: 0)')
+    parser.add_argument('--use_test', dest='use_test', type=bool, default=True,
+                        help='use testset to evaluate (default: True)')
+    parser.add_argument('--test_interval', dest='test_interval', type=int, default=1,
+                        help='interval of USE_TEST (default: 1)')
     parser.add_argument('--ckpt_interval', dest='ckpt_interval', type=int, default=5,
-                        help='interval of saving checkpoint')
-    parser.add_argument('--all_data', dest='all_data', type=bool, default=False, help='use all data for training')
+                        help='interval of saving checkpoint (default: 5)')
+    parser.add_argument('--all_data', dest='all_data', type=bool, default=False,
+                        help='use all data for training (default: False)')
+    parser.add_argument('--early_stop', dest='early_stop', type=int, default=10,
+                        help='early stop steps without optimization (default: 10)')
     return parser.parse_args()
